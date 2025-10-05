@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { authAPI } from '../../services/api';
-import { UtensilsCrossed, User, Mail, Lock, Phone, MapPin, Eye, EyeOff, AlertCircle } from 'lucide-react';
+import { UtensilsCrossed, User, Mail, Lock, Phone, MapPin, Eye, EyeOff, CircleAlert as AlertCircle } from 'lucide-react';
 import { cameroonianTowns } from '../../data/mockData';
 
 export default function Register() {
