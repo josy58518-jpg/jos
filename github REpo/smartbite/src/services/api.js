@@ -38,7 +38,9 @@ export const authAPI = {
     phone: userData.phone || '',
     email: userData.email,
     password: userData.password,
-    confirm: userData.password
+    confirm: userData.password,
+    role: userData.role || 'customer',
+    town: userData.town || ''
   }).then(response => {
     if (response.data.success) {
       return api.post('/api_auth.php?action=login', {

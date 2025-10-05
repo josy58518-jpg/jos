@@ -76,14 +76,17 @@ export default function Register() {
     try {
       const { confirmPassword, ...registrationData } = formData;
       const success = await register(registrationData);
-      
+
       if (success) {
         navigate('/');
       } else {
-        setError('Registration failed. Email may already be in use.');
+        setError('Registration failed. Please try again.');
       }
     } catch (err: any) {
-      if (err.response?.data?.error) {
+      console.error('Registration error:', err);
+      if (err.message) {
+        setError(err.message);
+      } else if (err.response?.data?.error) {
         setError(err.response.data.error);
       } else {
         setError('Registration failed. Please try again.');

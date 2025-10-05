@@ -220,14 +220,25 @@ try {
                     $stmt->execute();
                     $stmt->close();
                 } elseif ($role === 'owner') {
-                    // Owner is a restaurant manager without restaurant yet
+                    // Owner is a restaurant manager - they also get customer account
                     $stmt = $conn->prepare('INSERT INTO Customer (CustomerID, UserID) VALUES (?, ?)');
                     $stmt->bind_param('ii', $userId, $userId);
                     $stmt->execute();
                     $stmt->close();
 
-                    $stmt = $conn->prepare('INSERT INTO Restaurant_Manager (ManagerID, UserID, RestaurantID) VALUES (?, ?, 1)');
-                    $stmt->bind_param('ii', $userId, $userId);
+                    // Check if there's at least one restaurant, if not create a placeholder
+                    $result = $conn->query('SELECT RestaurantID FROM Restaurant LIMIT 1');
+                    if ($result->num_rows === 0) {
+                        // Create a placeholder restaurant
+                        $conn->query("INSERT INTO Restaurant (RestaurantName, Address, ContactNumber, Location, Status) VALUES ('Pending Setup', 'To be configured', '', '', 'Active')");
+                        $restaurantId = $conn->insert_id;
+                    } else {
+                        $row = $result->fetch_assoc();
+                        $restaurantId = $row['RestaurantID'];
+                    }
+
+                    $stmt = $conn->prepare('INSERT INTO Restaurant_Manager (ManagerID, UserID, RestaurantID) VALUES (?, ?, ?)');
+                    $stmt->bind_param('iii', $userId, $userId, $restaurantId);
                     $stmt->execute();
                     $stmt->close();
                 } elseif ($role === 'agent') {

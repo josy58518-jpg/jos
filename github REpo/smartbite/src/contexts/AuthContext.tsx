@@ -66,9 +66,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(newUser);
 
       return true;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Registration error:', error);
-      return false;
+      if (error.response?.data?.error) {
+        throw new Error(error.response.data.error);
+      }
+      throw error;
     }
   };
 
