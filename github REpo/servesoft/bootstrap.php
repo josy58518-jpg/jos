@@ -20,14 +20,14 @@ $response = [
 ];
 
 try {
-    $restaurantQuery = $conn->query('SELECT RestaurantID, RestaurantName, Status, Location, PhoneNumber, Address FROM Restaurant');
+    $restaurantQuery = $conn->query('SELECT RestaurantID, RestaurantName, Status, Location, ContactNumber, Address FROM Restaurant');
     while ($row = $restaurantQuery->fetch_assoc()) {
         $response['restaurants'][] = [
             'id' => 'r' . $row['RestaurantID'],
             'name' => $row['RestaurantName'],
             'status' => $row['Status'] ?? 'ACTIVE',
             'location' => $row['Location'] ?? '',
-            'phone' => $row['PhoneNumber'] ?? '',
+            'phone' => $row['ContactNumber'] ?? '',
             'address' => $row['Address'] ?? '',
             'hours' => null,
             'serviceRules' => null
@@ -47,14 +47,14 @@ try {
     }
     $tableQuery->close();
 
-    $menuQuery = $conn->query('SELECT MenuID, RestaurantID, ItemName, ItemDescription, Category, Availability, Price FROM MenuItem');
+    $menuQuery = $conn->query('SELECT MenuID, RestaurantID, ItemName, ItemDescription, Availability, Price FROM MenuItem');
     while ($row = $menuQuery->fetch_assoc()) {
         $response['menuItems'][] = [
             'id' => 'm' . $row['MenuID'],
             'restaurantId' => 'r' . $row['RestaurantID'],
             'name' => $row['ItemName'],
             'description' => $row['ItemDescription'] ?? '',
-            'category' => $row['Category'] ?? 'General',
+            'category' => 'General',
             'available' => (bool) $row['Availability'],
             'price' => (float) $row['Price'],
             'modifiers' => []

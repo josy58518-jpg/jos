@@ -36,68 +36,100 @@ try {
                 exit;
             }
 
-            $stmt = $conn->prepare('SELECT a.AccountID, a.UserID, a.Password, u.Name, u.Email, u.PhoneNumber FROM Account a INNER JOIN User u ON u.UserID = a.UserID WHERE u.Email = ?');
+            $stmt = $conn->prepare('SELECT UserID, Name, Email, PhoneNumber, Password FROM User WHERE Email = ?');
             $stmt->bind_param('s', $email);
             $stmt->execute();
             $result = $stmt->get_result();
-            $account = $result->fetch_assoc();
+            $user = $result->fetch_assoc();
             $stmt->close();
 
-            if (!$account || !password_verify($password, $account['Password'])) {
+            if (!$user || !password_verify($password, $user['Password'])) {
                 http_response_code(401);
                 echo json_encode(['error' => 'Invalid credentials']);
                 exit;
             }
 
-            // Get user roles
-            require 'session_helper.php';
-            $roles = getUserRoles($conn, $account['UserID']);
+            $userId = $user['UserID'];
 
-            // Determine primary role (priority: admin > owner > agent > customer)
+            // Determine user role
             $primaryRole = 'customer';
             $roleData = null;
 
-            foreach ($roles as $role) {
-                if ($role['type'] === 'admin') {
-                    $primaryRole = 'admin';
-                    $roleData = $role;
-                    break;
-                } elseif ($role['type'] === 'owner') {
+            // Check if admin
+            $stmt = $conn->prepare('SELECT AdminID FROM Admin WHERE UserID = ?');
+            $stmt->bind_param('i', $userId);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            if ($result->num_rows > 0) {
+                $primaryRole = 'admin';
+                $roleData = ['id' => $result->fetch_assoc()['AdminID']];
+            }
+            $stmt->close();
+
+            // Check if restaurant manager
+            if ($primaryRole === 'customer') {
+                $stmt = $conn->prepare('SELECT ManagerID, RestaurantID FROM Restaurant_Manager WHERE UserID = ?');
+                $stmt->bind_param('i', $userId);
+                $stmt->execute();
+                $result = $stmt->get_result();
+                if ($result->num_rows > 0) {
+                    $managerData = $result->fetch_assoc();
                     $primaryRole = 'owner';
-                    $roleData = $role;
-                    break;
-                } elseif ($role['type'] === 'agent') {
-                    $primaryRole = 'agent';
-                    $roleData = $role;
-                } elseif ($role['type'] === 'customer' && !$roleData) {
-                    $roleData = $role;
+                    $roleData = [
+                        'id' => $managerData['ManagerID'],
+                        'restaurant_id' => 'r' . $managerData['RestaurantID']
+                    ];
                 }
+                $stmt->close();
+            }
+
+            // Check if delivery agent
+            if ($primaryRole === 'customer') {
+                $stmt = $conn->prepare('SELECT AgentID FROM DeliveryAgent WHERE UserID = ?');
+                $stmt->bind_param('i', $userId);
+                $stmt->execute();
+                $result = $stmt->get_result();
+                if ($result->num_rows > 0) {
+                    $agentData = $result->fetch_assoc();
+                    $primaryRole = 'agent';
+                    $roleData = ['id' => $agentData['AgentID']];
+                }
+                $stmt->close();
+            }
+
+            // Check if customer
+            if ($primaryRole === 'customer') {
+                $stmt = $conn->prepare('SELECT CustomerID FROM Customer WHERE UserID = ?');
+                $stmt->bind_param('i', $userId);
+                $stmt->execute();
+                $result = $stmt->get_result();
+                if ($result->num_rows > 0) {
+                    $customerData = $result->fetch_assoc();
+                    $roleData = ['id' => $customerData['CustomerID']];
+                }
+                $stmt->close();
             }
 
             // Set session
-            $_SESSION['user_id'] = $account['UserID'];
-            $_SESSION['account_id'] = $account['AccountID'];
-            $_SESSION['name'] = $account['Name'];
-            $_SESSION['email'] = $account['Email'];
-            $_SESSION['phone'] = $account['PhoneNumber'];
+            $_SESSION['user_id'] = $userId;
+            $_SESSION['name'] = $user['Name'];
+            $_SESSION['email'] = $user['Email'];
+            $_SESSION['phone'] = $user['PhoneNumber'];
             $_SESSION['primary_role'] = $primaryRole;
-
-            // Temporarily add this before the final response:
-            error_log("DEBUG - User roles: " . json_encode($roles));
-            error_log("DEBUG - Primary role: " . $primaryRole);
+            $_SESSION['role_data'] = $roleData;
 
             echo json_encode([
                 'success' => true,
                 'user' => [
-                    'id' => 'u' . $account['UserID'],
-                    'name' => $account['Name'],
-                    'email' => $account['Email'],
-                    'phone' => $account['PhoneNumber'],
+                    'id' => 'u' . $userId,
+                    'name' => $user['Name'],
+                    'email' => $user['Email'],
+                    'phone' => $user['PhoneNumber'],
                     'role' => $primaryRole,
-                    'roleData' => $roleData,
-                    'allRoles' => $roles // TEMPORARY - for debugging
+                    'roleData' => $roleData
                 ]
             ]);
+            break;
 
         case 'register':
             if ($method !== 'POST') {
@@ -111,12 +143,12 @@ try {
             $phone = trim($data['phone'] ?? '');
             $email = trim($data['email'] ?? '');
             $password = $data['password'] ?? '';
-            $confirm = $data['confirm'] ?? '';
+            $confirm = $data['confirm'] ?? $password;
             $role = $data['role'] ?? 'customer';
             $town = trim($data['town'] ?? '');
 
             // Validation
-            if (empty($name) || empty($email) || empty($password) || empty($confirm)) {
+            if (empty($name) || empty($email) || empty($password)) {
                 http_response_code(400);
                 echo json_encode(['error' => 'All required fields must be completed']);
                 exit;
@@ -146,82 +178,73 @@ try {
                 $stmt->execute();
                 $result = $stmt->get_result();
                 if ($result->num_rows > 0) {
-                    http_response_code(400);
+                    http_response_code(409);
                     echo json_encode(['error' => 'Admin account already exists']);
                     exit;
                 }
                 $stmt->close();
             }
 
+            // Check if email already exists
+            $stmt = $conn->prepare('SELECT UserID FROM User WHERE Email = ?');
+            $stmt->bind_param('s', $email);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            if ($result->num_rows > 0) {
+                http_response_code(409);
+                echo json_encode(['error' => 'Email already exists']);
+                exit;
+            }
+            $stmt->close();
+
             $conn->begin_transaction();
             try {
-                // Create user
-                $stmt = $conn->prepare('INSERT INTO User (Name, PhoneNumber, Email) VALUES (?, ?, ?)');
-                $stmt->bind_param('sss', $name, $phone, $email);
+                // Create user with password
+                $hashed = password_hash($password, PASSWORD_DEFAULT);
+                $phoneNumber = !empty($phone) ? $phone : '';
+                $stmt = $conn->prepare('INSERT INTO User (Name, PhoneNumber, Email, Password) VALUES (?, ?, ?, ?)');
+                $stmt->bind_param('ssss', $name, $phoneNumber, $email, $hashed);
                 $stmt->execute();
                 $userId = $stmt->insert_id;
                 $stmt->close();
 
-                // Create account
-                $hashed = password_hash($password, PASSWORD_DEFAULT);
-                $stmt = $conn->prepare('INSERT INTO Account (UserID, PhoneNumber, Password) VALUES (?, ?, ?)');
-                $stmt->bind_param('iss', $userId, $phone, $hashed);
-                $stmt->execute();
-                $stmt->close();
-
                 // Create role-specific records
                 if ($role === 'customer') {
-                    $stmt = $conn->prepare('INSERT INTO Customer (UserID) VALUES (?)');
-                    $stmt->bind_param('i', $userId);
+                    $stmt = $conn->prepare('INSERT INTO Customer (CustomerID, UserID) VALUES (?, ?)');
+                    $stmt->bind_param('ii', $userId, $userId);
                     $stmt->execute();
                     $stmt->close();
                 } elseif ($role === 'admin') {
-                    $stmt = $conn->prepare('INSERT INTO Admin (UserID) VALUES (?)');
-                    $stmt->bind_param('i', $userId);
+                    $stmt = $conn->prepare('INSERT INTO Admin (AdminID, UserID) VALUES (?, ?)');
+                    $stmt->bind_param('ii', $userId, $userId);
                     $stmt->execute();
                     $stmt->close();
                 } elseif ($role === 'owner') {
-                    // Owner becomes a manager - create staff and manager records
-                    $stmt = $conn->prepare('INSERT INTO Customer (UserID) VALUES (?)');
-                    $stmt->bind_param('i', $userId);
+                    // Owner is a restaurant manager without restaurant yet
+                    $stmt = $conn->prepare('INSERT INTO Customer (CustomerID, UserID) VALUES (?, ?)');
+                    $stmt->bind_param('ii', $userId, $userId);
                     $stmt->execute();
                     $stmt->close();
 
-                    $staffRole = 'MANAGER';
-                    $status = 'ACTIVE';
-                    $stmt = $conn->prepare('INSERT INTO RestaurantStaff (UserID, RestaurantID, Role, DateHired, Status) VALUES (?, NULL, ?, CURDATE(), ?)');
-                    $stmt->bind_param('iss', $userId, $staffRole, $status);
-                    $stmt->execute();
-                    $staffId = $stmt->insert_id;
-                    $stmt->close();
-
-                    $stmt = $conn->prepare('INSERT INTO RestaurantManager (StaffID) VALUES (?)');
-                    $stmt->bind_param('i', $staffId);
+                    $stmt = $conn->prepare('INSERT INTO Restaurant_Manager (ManagerID, UserID, RestaurantID) VALUES (?, ?, 1)');
+                    $stmt->bind_param('ii', $userId, $userId);
                     $stmt->execute();
                     $stmt->close();
                 } elseif ($role === 'agent') {
-                    // Agent becomes a delivery agent - create staff and delivery agent records
-                    $stmt = $conn->prepare('INSERT INTO Customer (UserID) VALUES (?)');
-                    $stmt->bind_param('i', $userId);
+                    // Agent is a delivery agent
+                    $stmt = $conn->prepare('INSERT INTO Customer (CustomerID, UserID) VALUES (?, ?)');
+                    $stmt->bind_param('ii', $userId, $userId);
                     $stmt->execute();
                     $stmt->close();
 
-                    $staffRole = 'DELIVERY';
-                    $status = 'ACTIVE';
-                    $stmt = $conn->prepare('INSERT INTO RestaurantStaff (UserID, RestaurantID, Role, DateHired, Status) VALUES (?, NULL, ?, CURDATE(), ?)');
-                    $stmt->bind_param('iss', $userId, $staffRole, $status);
-                    $stmt->execute();
-                    $staffId = $stmt->insert_id;
-                    $stmt->close();
-
-                    $stmt = $conn->prepare('INSERT INTO DeliveryAgent (StaffID) VALUES (?)');
-                    $stmt->bind_param('i', $staffId);
+                    $stmt = $conn->prepare('INSERT INTO DeliveryAgent (AgentID, UserID) VALUES (?, ?)');
+                    $stmt->bind_param('ii', $userId, $userId);
                     $stmt->execute();
                     $stmt->close();
                 } else {
-                    // Default to customer if unknown role
-                    $stmt = $conn->prepare('INSERT INTO Customer (UserID) VALUES (?)');
-                    $stmt->bind_param('i', $userId);
+                    // Default to customer
+                    $stmt = $conn->prepare('INSERT INTO Customer (CustomerID, UserID) VALUES (?, ?)');
+                    $stmt->bind_param('ii', $userId, $userId);
                     $stmt->execute();
                     $stmt->close();
                 }
@@ -237,7 +260,7 @@ try {
                 $conn->rollback();
                 if ($e->getCode() === 1062) {
                     http_response_code(409);
-                    echo json_encode(['error' => 'Email already exists']);
+                    echo json_encode(['error' => 'Email or phone number already exists']);
                 } else {
                     throw $e;
                 }
@@ -250,18 +273,8 @@ try {
                 exit;
             }
 
-            require 'session_helper.php';
-            $roles = getUserRoles($conn, $_SESSION['user_id']);
-            
             $primaryRole = $_SESSION['primary_role'] ?? 'customer';
-            $roleData = null;
-            
-            foreach ($roles as $role) {
-                if ($role['type'] === $primaryRole) {
-                    $roleData = $role;
-                    break;
-                }
-            }
+            $roleData = $_SESSION['role_data'] ?? null;
 
             echo json_encode([
                 'authenticated' => true,
